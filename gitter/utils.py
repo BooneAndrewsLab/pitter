@@ -1,9 +1,10 @@
 import logging
+
 import numpy as np
 from scipy import signal
-from skimage.transform import radon, rescale, rotate, resize
-from skimage.morphology import opening, square
 from skimage.measure import regionprops
+from skimage.morphology import opening, square
+from skimage.transform import radon, rescale, rotate, resize
 
 log = logging.getLogger(__name__)
 
@@ -19,11 +20,7 @@ def round_odd(x):
     return int(x + 1 - x % 2)
 
 
-def round_even(x):
-    return 2. * np.round(x / 2)
-
-
-def find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
+def _find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
     im = rescale(im, scale_to_h / im.shape[0], mode='reflect')
     samples = (angle_eps * 2) / degree_inc
 
@@ -39,12 +36,12 @@ def find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
 
 
 def autorotate_image(im, **kwargs):
-    angle = find_rotation_angle(im, **kwargs)
+    angle = _find_rotation_angle(im, **kwargs)
     log.info('Rotate for %.2f' % (angle,))
     return rotate(im, angle)
 
 
-def find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
+def _find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
     x[(x < lim[0]) | (x > lim[1])] = 0
 
     t = np.round(np.mean(x), r)
@@ -62,7 +59,7 @@ def find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
             log.info('Optimal threshold t = %s' % t)
             if t > cap:
                 t = np.percentile(x, 90)
-                log.warn('Optimal threshold too high, setting threshold to 90th percentile t = %s' % t)
+                log.warning('Optimal threshold too high, setting threshold to 90th percentile t = %s' % t)
 
             return t
         else:
@@ -84,41 +81,37 @@ def threshold_image(im, rows, scale_to_h=1000):
     im = np.clip(im - op, 0, 1)
 
     # Find threshold
-    thresh = find_optimal_threshold(rescale(im, scale_to_h / im.shape[0], mode='reflect'))
+    thresh = _find_optimal_threshold(rescale(im, scale_to_h / im.shape[0], mode='reflect'))
 
     return (im >= thresh).astype(np.uint8)
 
 
-def split_half(vec):
+def _split_half(vec):
     t = int(np.ceil(vec.shape[0] / 2))  # middle
     return vec[:t - 1], vec[t + 1:]
 
 
 # Adapted from
-# https://www.kaggle.com/rakhlin/fast-run-length-encoding-python
-def rle_encoding(x):
-    """
-    x: numpy array of shape (height, width), 1 - mask, 0 - background
-    Returns run length as list
-    """
-    dots = np.where(x.T.flatten() == 1)[0]  # .T sets Fortran order down-then-right
-    run_lengths = []
-    prev = -2
-    for b in dots:
-        if b > prev + 1:
-            run_lengths.extend((b + 1, 0))
-        run_lengths[-1] += 1
-        prev = b
-    return np.array(run_lengths)
+# https://stackoverflow.com/a/1066838
+def _rle(threshold):
+    def _inner(bits):
+        # make sure all runs of ones are well-bounded
+        bounded = np.hstack(([0], bits, [0]))
+        # get 1 at run starts and -1 at run ends
+        difs = np.diff(bounded)
+        run_starts, = np.where(difs > 0)
+        run_ends, = np.where(difs < 0)
+        return np.any((run_ends - run_starts) > threshold)
+    return _inner
 
 
 def remove_rle(im, p=0.2, axis=0):
     c = p * im.shape[axis]
 
-    z = np.apply_along_axis(lambda xx: np.any(rle_encoding(xx)[1::2] > c), axis, im)
+    z = np.apply_along_axis(_rle(c), axis, im)
     x = im.sum(axis=axis)
 
-    zhl, zhr = split_half(z)
+    zhl, zhr = _split_half(z)
 
     left, right = np.where(zhl)[0].max(), np.where(zhr)[0].min() + zhl.shape[0]
 
@@ -130,7 +123,7 @@ def remove_rle(im, p=0.2, axis=0):
     return x, left, right
 
 
-def rolling_window(a, window):
+def _rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
@@ -138,7 +131,7 @@ def rolling_window(a, window):
 
 def colony_peaks(x, n):
     # Smooth the signal
-    window = signal.general_gaussian(51, p=1.5, sig=20)
+    window = signal.windows.general_gaussian(51, p=1.5, sig=20)
 
     filtered = signal.fftconvolve(window, x)
     filtered = (np.average(x) / np.average(filtered)) * filtered
@@ -148,7 +141,7 @@ def colony_peaks(x, n):
     peaks = signal.argrelmax(filtered, order=30)[0]
 
     peak_distances = np.abs(peaks[:-1] - peaks[1:])
-    dist_dev = np.std(rolling_window(peak_distances, n - 1), 1)
+    dist_dev = np.std(_rolling_window(peak_distances, n - 1), 1)
     grid_start = np.argmin(dist_dev)
 
     return np.median(peak_distances), peaks[grid_start:grid_start + n]

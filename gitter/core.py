@@ -1,28 +1,17 @@
-import pandas as p
+import logging
+from itertools import product
 
+import numpy as np
+import pandas as p
+from matplotlib import pyplot as plt
 from skimage.io import imread
 from skimage.transform import rescale
-from itertools import product
-from matplotlib import pyplot as plt
-import numpy as np
-import logging
 
-from gitter.utils import set_contrast, autorotate_image, threshold_image, remove_rle, colony_peaks, round_odd, \
+from .common import DEFAULT_FORMAT, FORMATS, GitterException
+from .utils import set_contrast, autorotate_image, threshold_image, remove_rle, colony_peaks, round_odd, \
     find_bounds
 
 log = logging.getLogger(__name__)
-
-DEFAULT_FORMAT = 1536
-
-FORMATS = {
-    1536: (32, 48),
-    384: (16, 24),
-    96: (8, 12)
-}
-
-
-class GitterException(Exception):
-    pass
 
 
 class Gitter:
@@ -78,8 +67,10 @@ class Gitter:
         minb = np.round(colony_eps / 3)
         sizes = []
 
-        plt.imshow(self.thresholded, cmap='Greys_r')
-        plt.gcf().set_size_inches((20, 10))
+        if self.opt.save_grid:
+            plt.imshow(self.thresholded, cmap='Greys_r')
+            plt.gcf().set_size_inches((20, 10))
+
         for idx, x, y, ccolumn, crow in self.data.itertuples():
             cent_pixel = self.thresholded[y, x]
 
@@ -107,17 +98,21 @@ class Gitter:
                 rl, rr = -minb, minb
                 cl, cr = -minb, minb
 
-            plt.vlines([cl + x, cr + x], rl + y, rr + y, 'red')
-            plt.hlines([rl + y, rr + y], cl + x, cr + x, 'red')
+            if self.opt.save_grid:
+                plt.vlines([cl + x, cr + x], rl + y, rr + y, 'red')
+                plt.hlines([rl + y, rr + y], cl + x, cr + x, 'red')
 
-            cropped = self.thresholded[
-                      int(rl + y):int(rr + y) - 1,
-                      int(cl + x):int(cr + x) - 1]
-            size = np.sum(cropped)
-            sizes.append(size)
-            # print(size)
-        plt.savefig('./test.png', dpi=200)
+            sizes.append(np.sum(self.thresholded[
+                                int(rl + y):int(rr + y) - 1,
+                                int(cl + x):int(cr + x) - 1]))
+
+        if self.opt.save_grid:
+            plt.savefig('./test.png', dpi=200)
+
         self.data.loc[:, 'size'] = sizes
+
+        print(self.data)
+        return self.data
 
     @staticmethod
     def auto_process(image, options=None, **kwargs):
@@ -157,18 +152,3 @@ class GitterOptions:
         self.fast = fast
         self.save_grid = save_grid
         self.save_dat = save_dat
-
-
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Gitter.')
-    parser.add_argument('image')
-
-    args = parser.parse_args()
-
-    Gitter.auto_process(args.image)
-
-
-if __name__ == '__main__':
-    main()

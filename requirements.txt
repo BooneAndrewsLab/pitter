@@ -2,4 +2,5 @@ pandas
 scikit-image
 matplotlib
 numpy
-scipy
+scipy=>1
+click
