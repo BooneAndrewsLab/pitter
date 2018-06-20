@@ -1,4 +1,5 @@
 import logging
+import os
 from itertools import product
 
 import numpy as np
@@ -67,10 +68,6 @@ class Gitter:
         minb = np.round(colony_eps / 3)
         sizes = []
 
-        if self.opt.save_grid:
-            plt.imshow(self.thresholded, cmap='Greys_r')
-            plt.gcf().set_size_inches((20, 10))
-
         for idx, x, y, ccolumn, crow in self.data.itertuples():
             cent_pixel = self.thresholded[y, x]
 
@@ -98,25 +95,41 @@ class Gitter:
                 rl, rr = -minb, minb
                 cl, cr = -minb, minb
 
-            if self.opt.save_grid:
-                plt.vlines([cl + x, cr + x], rl + y, rr + y, 'red')
-                plt.hlines([rl + y, rr + y], cl + x, cr + x, 'red')
-
-            sizes.append(np.sum(self.thresholded[
+            self.data.loc[idx, 'size'] = np.sum(self.thresholded[
                                 int(rl + y):int(rr + y) - 1,
-                                int(cl + x):int(cr + x) - 1]))
+                                int(cl + x):int(cr + x) - 1])
 
-        if self.opt.save_grid:
-            plt.savefig('./test.png', dpi=200)
 
-        self.data.loc[:, 'size'] = sizes
 
-        print(self.data)
+        #     sizes.append(np.sum(self.thresholded[
+        #                         int(rl + y):int(rr + y) - 1,
+        #                         int(cl + x):int(cr + x) - 1]))
+        #
+        # self.data.loc[:, 'size'] = sizes
+
         return self.data
 
+    def save(self):
+        if self.opt.save_dat:
+            dest = self.opt.save_dat
+            if isinstance(dest, bool):
+                dest = os.path.splitext(self.path)[0] + '.dat'
+            self.data.to_csv(dest, sep='\t', index=False)
+
+        if self.opt.save_grid:
+            plt.imshow(self.thresholded, cmap='Greys_r')
+            plt.gcf().set_size_inches((20, 10))
+
+            plt.vlines([cl + x, cr + x], rl + y, rr + y, 'red')
+            plt.hlines([rl + y, rr + y], cl + x, cr + x, 'red')
+
+            plt.savefig('./test.png', dpi=200)
+
+
+
     @staticmethod
-    def auto_process(image, options=None, **kwargs):
-        gitter = Gitter(image, options, **kwargs)
+    def auto_process(image, **kwargs):
+        gitter = Gitter(image, **kwargs)
         gitter.load_image()
         gitter.grid()
         gitter.quantify()
