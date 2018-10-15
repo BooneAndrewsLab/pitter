@@ -2,7 +2,7 @@ import logging
 
 import numpy as np
 from scipy import signal
-from skimage.measure import regionprops
+from skimage.measure import perimeter
 from skimage.morphology import opening, square
 from skimage.transform import radon, rescale, rotate, resize
 
@@ -10,18 +10,38 @@ log = logging.getLogger(__name__)
 
 
 def set_contrast(im, contrast=10):
+    """
+    Adjust contrast of an image.
+
+    :param im: image
+    :param contrast: Adjustment to the contrast
+    :type im: ndarray
+    :type contrast: int
+
+    :return: Image with adjusted contrast
+    :rtype: ndarray
+    """
     c = (100.0 + contrast) / 100.0
     im = ((im - 0.5) * c) + 0.5
     return np.clip(im, 0, 1)
 
 
 def round_odd(x):
+    """
+    Round up to the closest odd integer.
+
+    :param x: number to round
+    :type x: [int, float]
+
+    :return: Number rounded up to the closest odd integer.
+    :rtype: int
+    """
     x = np.floor(x)
     return int(x + 1 - x % 2)
 
 
 def _find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
-    im = rescale(im, scale_to_h / im.shape[0], mode='reflect')
+    im = rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True)
     samples = (angle_eps * 2) / degree_inc
 
     theta = np.linspace(90 - angle_eps, 90 + angle_eps, int(samples), endpoint=False)
@@ -36,6 +56,17 @@ def _find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
 
 
 def autorotate_image(im, **kwargs):
+    """
+    Detect if the image is rotated and correct it to be horizontal.
+
+    :param im: image
+    :param kwargs: additional arguments passed along to _find_rotation_angle.
+    :type im: ndarray
+    :type kwargs: keywords
+
+    :return: Rotated image
+    :rtype: ndarray
+    """
     angle = _find_rotation_angle(im, **kwargs)
     log.info('Rotate for %.2f' % (angle,))
     return rotate(im, angle)
@@ -72,7 +103,7 @@ def _find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
 
 
 def threshold_image(im, rows, scale_to_h=1000):
-    im_small = rescale(im, scale_to_h / im.shape[0], mode='reflect')
+    im_small = rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True)
 
     si = np.round((im_small.shape[0] / rows) * 1.5)
 
@@ -81,7 +112,8 @@ def threshold_image(im, rows, scale_to_h=1000):
     im = np.clip(im - op, 0, 1)
 
     # Find threshold
-    thresh = _find_optimal_threshold(rescale(im, scale_to_h / im.shape[0], mode='reflect'))
+    thresh = _find_optimal_threshold(
+        rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True))
 
     return (im >= thresh).astype(np.uint8)
 
@@ -91,9 +123,18 @@ def _split_half(vec):
     return vec[:t - 1], vec[t + 1:]
 
 
-# Adapted from
-# https://stackoverflow.com/a/1066838
 def _rle(threshold):
+    """
+    Fast run length encoding function. Adapted from https://stackoverflow.com/a/1066838
+    This is a wrapper that can be used as
+
+    :param threshold: threshold value used in the wrapped function
+    :type threshold: ndarray
+
+    :return: RLE function
+    :rtype: function
+    """
+
     def _inner(bits):
         # make sure all runs of ones are well-bounded
         bounded = np.hstack(([0], bits, [0]))
@@ -102,6 +143,7 @@ def _rle(threshold):
         run_starts, = np.where(difs > 0)
         run_ends, = np.where(difs < 0)
         return np.any((run_ends - run_starts) > threshold)
+
     return _inner
 
 
@@ -156,10 +198,12 @@ def find_bounds(spot_axis):
     return left, right
 
 
-def circularity(spot):
-    r = regionprops(spot)
-    if not r:
-        return 0.
+def circularity(spot, area):
+    if not area:
+        return 0
 
-    r = r[0]
-    return (4 * np.pi * r.area) / (r.perimeter * r.perimeter)
+    perim = perimeter(spot)
+
+    if perim != 0:
+        return (4 * np.pi * area) / (perim * perim)
+    return 0

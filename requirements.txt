@@ -3,4 +3,3 @@ scikit-image
 matplotlib
 numpy
 scipy=>1
-click

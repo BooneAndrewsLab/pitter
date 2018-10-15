@@ -53,3 +53,9 @@ static/*
 .project
 .pydevproject
 .idea/
+
+# Python build system #
+#######################
+build/
+dist/
+*.egg-info/
