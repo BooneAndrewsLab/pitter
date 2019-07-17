@@ -65,9 +65,11 @@ class Gitter:
 
         return im
 
-    def grid(self):
-        sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.3, axis=0)
-        sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.3, axis=1)
+    def grid(self, ref_plate=None):
+        sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0,
+                                        override_boundaries=ref_plate.plate_boundaries[::2] if ref_plate else None)
+        sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1,
+                                        override_boundaries=ref_plate.plate_boundaries[1::2] if ref_plate else None)
 
         window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols)
         window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows)
@@ -182,7 +184,7 @@ class Gitter:
                 dest = os.path.splitext(self.path)[0] + '_gridded.jpg'
 
             plt.imshow(self.thresholded, cmap='Greys_r')
-            plt.gcf().set_size_inches((20, 10))
+            plt.gcf().set_size_inches((40, 20))
 
             for _, r in self.data.iterrows():
                 plt.vlines([r.cl + r.x, r.cr + r.x], r.rl + r.y, r.rr + r.y, 'red')
@@ -192,10 +194,10 @@ class Gitter:
             plt.clf()
 
     @staticmethod
-    def auto_process(image, **kwargs):
+    def auto_process(image, reference=None, **kwargs):
         gitter = Gitter(image, **kwargs)
         gitter.load_image()
-        gitter.grid()
+        gitter.grid(reference)
         gitter.quantify()
         gitter.save()
 

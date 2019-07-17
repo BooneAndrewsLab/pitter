@@ -4,7 +4,7 @@ import numpy as np
 from scipy import signal
 from skimage.measure import perimeter
 from skimage.morphology import opening, square
-from skimage.transform import radon, rescale, rotate, resize
+from skimage.transform import radon, rescale, rotate, resize, downscale_local_mean
 
 log = logging.getLogger(__name__)
 
@@ -103,17 +103,20 @@ def _find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
 
 
 def threshold_image(im, rows, scale_to_h=1000):
-    im_small = rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True)
+    scale = int(np.floor(1. / (scale_to_h / im.shape[0])))
+    im_small = downscale_local_mean(im, (scale, scale))  # downscaling is faster than resizing
 
     si = np.round((im_small.shape[0] / rows) * 1.5)
 
     op = opening(im_small, square(round_odd(si)))
+    im_small = np.clip(im_small - op, 0, 1)
+
     op = resize(op, im.shape, mode='reflect')
+
     im = np.clip(im - op, 0, 1)
 
     # Find threshold
-    thresh = _find_optimal_threshold(
-        rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True))
+    thresh = _find_optimal_threshold(im_small)
 
     return (im >= thresh).astype(np.uint8)
 
@@ -147,20 +150,25 @@ def _rle(threshold):
     return _inner
 
 
-def remove_rle(im, p=0.2, axis=0):
+def remove_rle(im, p=0.2, axis=0, override_boundaries=None):
     c = p * im.shape[axis]
 
     z = np.apply_along_axis(_rle(c), axis, im)
     x = im.sum(axis=axis)
 
-    zhl, zhr = _split_half(z)
-
-    left, right = np.where(zhl)[0].max(), np.where(zhr)[0].min() + zhl.shape[0]
-
-    if zhl.any():
+    if override_boundaries:
+        left, right = override_boundaries
         x[:left] = 0
-    if zhr.any():
         x[right:] = 0
+    else:
+        zhl, zhr = _split_half(z)
+
+        left, right = np.where(zhl)[0].max(), np.where(zhr)[0].min() + zhl.shape[0]
+
+        if zhl.any():
+            x[:left] = 0
+        if zhr.any():
+            x[right:] = 0
 
     return x, left, right
 
