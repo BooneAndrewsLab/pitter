@@ -206,7 +206,8 @@ class Gitter:
 
 class GitterOptions:
     def __init__(self, plate_format=DEFAULT_FORMAT, remove_noise=False, auto_rotate=False, inverse=False,
-                 contrast=None, rescale=0, save_grid=False, save_dat=True, colony_compat=False):
+                 contrast=None, rescale=0, save_grid=False, save_dat=True, colony_compat=False,
+                 template_plate=None, ignore_errors=False, resume_processing=False):
         # Check if we have one number plate formats
         if isinstance(plate_format, int):
             if plate_format not in FORMATS:
@@ -233,3 +234,6 @@ class GitterOptions:
         self.save_grid = save_grid
         self.save_dat = save_dat
         self.colony_compat = colony_compat
+        self.template_plate = template_plate
+        self.ignore_errors = ignore_errors
+        self.resume_processing = resume_processing

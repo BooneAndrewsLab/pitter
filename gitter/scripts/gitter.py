@@ -28,10 +28,15 @@ def main():
                         help='Enable colony imager compatibility mode (header).')
     parser.add_argument('-t', '--template-plate',
                         help='Use this plate as the gridding reference for other plates.')
+    parser.add_argument('-l', '--detect-template', action='store_true',
+                        help='Automatically detect the last timepoint of each plate and use it as the template. If '
+                             'provided, the script will ignore (-t) template-plate flag.')
 
     args = vars(parser.parse_args())
     args['save_dat'] = not args.pop('skip_dat')
     recurse = args.pop('walk_folders')
+    template_plate = args.pop('template_plate')
+    detect_template = args.pop('detect_template')
 
     images = []
 
@@ -46,15 +51,29 @@ def main():
         elif os.path.isfile(im):
             images.append(im)
 
+    plate_template_map = {}
+    template = None
+    if detect_template:
+        for im in images:
+            plate = os.path.basename(im).split('_')[2]
+            if plate not in plate_template_map:
+                plate_template_path = sorted(filter(lambda x: '_%s_' % plate in x, images))[-1]
+                template = Gitter(plate_template_path, **args)
+                template.load_image()
+                template.grid()
+                plate_template_map[plate] = template
+                print("Plate %s — Template: %s" % (plate, plate_template_path))
+            else:
+                continue
+    else:
+        if template_plate:
+            template = Gitter(template_plate, **args)
+            template.load_image()
+            template.grid()
+
     failed = []
     resume = args.pop('resume_processing')
     ignore_errors = args.pop('ignore_errors')
-
-    template = args.pop('template_plate')
-    if template:
-        template = Gitter(template, **args)
-        template.load_image()
-        template.grid()
 
     print("Processing %d images" % len(images))
     for imidx, im in enumerate(images):
@@ -64,6 +83,9 @@ def main():
 
         print("Image %d/%d: %s" % (imidx + 1, len(images), im))
         try:
+            if detect_template:
+                plate = os.path.basename(im).split('_')[2]
+                template = plate_template_map[plate]
             Gitter.auto_process(im, reference=template, **args)
         except Exception as ex:
             if ignore_errors:
