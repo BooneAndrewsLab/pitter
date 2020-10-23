@@ -31,6 +31,14 @@ def main():
     parser.add_argument('-l', '--detect-template', action='store_true',
                         help='Automatically detect the last timepoint of each plate and use it as the template. If '
                              'provided, the script will ignore (-t) template-plate flag.')
+    parser.add_argument('-L', '--liquid-assay', action='store_true',
+                        help='This is a timecourse liquid assay. Must be used in combination with -l. Use last '
+                             'timepoint to detect the area of each colony and measure opacity instead of area.')
+    parser.add_argument('--local-illumination', action='store_true',
+                        help='Calculate local illumination correction for liquid assays. Background intensity will be '
+                             'calculated for each colony. Produces better quantification resolution, but takes much '
+                             'longer to run. WiP WARNING there are still some problems with edge cases, ie: border '
+                             'colonies.')
 
     args = vars(parser.parse_args())
     args['save_dat'] = not args.pop('skip_dat')
@@ -50,6 +58,9 @@ def main():
                     break  # break on first iteration
         elif os.path.isfile(im):
             images.append(im)
+
+    # Try processing images in a predictable order
+    images.sort()
 
     plate_template_map = {}
     template = None
@@ -86,7 +97,10 @@ def main():
             if detect_template:
                 plate = os.path.basename(im).split('_')[2]
                 template = plate_template_map[plate]
-            Gitter.auto_process(im, reference=template, **args)
+
+            opts = args.copy()
+            opts['template'] = template
+            Gitter.auto_process(im, **opts)
         except Exception as ex:
             if ignore_errors:
                 failed.append(im)
