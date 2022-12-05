@@ -70,24 +70,29 @@ class Gitter:
     def grid(self):
         ref_plate = self.opt.template
 
-        sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0,
-                                        override_boundaries=ref_plate.plate_boundaries[::2] if ref_plate else None)
-        sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1,
-                                        override_boundaries=ref_plate.plate_boundaries[1::2] if ref_plate else None)
+        if ref_plate and self.opt.use_template_locations:
+            self.window = ref_plate.window
+            self.plate_boundaries = ref_plate.plate_boundaries
+            self.data = ref_plate.data.copy()
+        else:
+            sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0,
+                                            override_boundaries=ref_plate.plate_boundaries[::2] if ref_plate else None)
+            sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1,
+                                            override_boundaries=ref_plate.plate_boundaries[1::2] if ref_plate else None)
 
-        window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols)
-        window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows)
+            window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero)
+            window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero)
 
-        self.window = np.round(np.mean([window_cols, window_rows]))
-        self.plate_boundaries = xlb, ylb, xrb, yrb
+            self.window = np.round(np.mean([window_cols, window_rows]))
+            self.plate_boundaries = xlb, ylb, xrb, yrb
 
-        self.data = p.DataFrame(list(product(col_peaks, row_peaks)), columns=['x', 'y'])
-        self.data = self.data.merge(
-            p.DataFrame(np.arange(1, col_peaks.shape[0] + 1), np.sort(col_peaks), columns=['col']),
-            how='left', left_on='x', right_index=True)
-        self.data = self.data.merge(
-            p.DataFrame(np.arange(1, row_peaks.shape[0] + 1), np.sort(row_peaks), columns=['row']),
-            how='left', left_on='y', right_index=True)
+            self.data = p.DataFrame(list(product(col_peaks, row_peaks)), columns=['x', 'y'])
+            self.data = self.data.merge(
+                p.DataFrame(np.arange(1, col_peaks.shape[0] + 1), np.sort(col_peaks), columns=['col']),
+                how='left', left_on='x', right_index=True)
+            self.data = self.data.merge(
+                p.DataFrame(np.arange(1, row_peaks.shape[0] + 1), np.sort(row_peaks), columns=['row']),
+                how='left', left_on='y', right_index=True)
 
     def quantify(self):
         if self.opt.liquid_assay:
@@ -299,7 +304,7 @@ class GitterOptions:
     def __init__(self, plate_format=DEFAULT_FORMAT, remove_noise=False, auto_rotate=False, inverse=False,
                  contrast=None, rescale=0, save_grid=False, save_dat=True, colony_compat=False, template=None,
                  template_plate=None, ignore_errors=False, resume_processing=False, liquid_assay=False,
-                 local_illumination=False):
+                 local_illumination=False, zero_border=False, use_template_locations=False):
         # Check if we have one number plate formats
         if isinstance(plate_format, int):
             if plate_format not in FORMATS:
@@ -313,6 +318,8 @@ class GitterOptions:
 
         if contrast and contrast <= 0:
             raise GitterException('Contrast value must be positive')
+
+        rescale = int(rescale)
 
         if rescale and not (1500 <= rescale <= 4000):
             raise GitterException('Rescale width must be between 1500-4000px')
@@ -332,3 +339,5 @@ class GitterOptions:
         self.resume_processing = resume_processing
         self.liquid_assay = liquid_assay
         self.local_illumination = local_illumination
+        self.border_to_zero = zero_border
+        self.use_template_locations = use_template_locations

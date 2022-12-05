@@ -31,6 +31,8 @@ def main():
     parser.add_argument('-l', '--detect-template', action='store_true',
                         help='Automatically detect the last timepoint of each plate and use it as the template. If '
                              'provided, the script will ignore (-t) template-plate flag.')
+    parser.add_argument('-T', '--use-template-locations', action='store_true',
+                        help='Use template\'s colony coordinates, not just plate location.')
     parser.add_argument('-L', '--liquid-assay', action='store_true',
                         help='This is a timecourse liquid assay. Must be used in combination with -l. Use last '
                              'timepoint to detect the area of each colony and measure opacity instead of area.')
@@ -39,6 +41,9 @@ def main():
                              'calculated for each colony. Produces better quantification resolution, but takes much '
                              'longer to run. WiP WARNING there are still some problems with edge cases, ie: border '
                              'colonies.')
+    parser.add_argument('-z', '--zero-border', action='store_true',
+                        help='When looking for peaks, set pixel_column < column_mean to zero, effectively removing '
+                             '"ghost" peaks on plate border. Use only if the colonies are well defined.')
 
     args = vars(parser.parse_args())
     args['save_dat'] = not args.pop('skip_dat')

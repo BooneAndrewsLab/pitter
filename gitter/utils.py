@@ -179,13 +179,16 @@ def _rolling_window(a, window):
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-def colony_peaks(x, n):
+def colony_peaks(x, n, border_to_zero=False):
     # Smooth the signal
     window = signal.windows.general_gaussian(51, p=1.5, sig=20)
 
     filtered = signal.fftconvolve(window, x)
     filtered = (np.average(x) / np.average(filtered)) * filtered
     filtered = np.roll(filtered, -25)
+
+    if border_to_zero:
+        filtered[filtered < np.mean(filtered)] = 0
 
     # Find local maximas
     peaks = signal.argrelmax(filtered, order=30)[0]
