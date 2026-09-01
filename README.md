@@ -190,12 +190,16 @@ you are debugging is the thresholding.
 - **There are no tests.** `test/` is empty and `test.py` is a one-line CLI driver. The
   rewrites above were verified by comparing `.dat` output before and after, which catches
   a regression in the measurement but not one in the picture.
-- **One unexplained SIGSEGV, 2026-09-01.** Seen once while reworking `quantify_solid`, on
-  the first run after the edit, with stderr discarded — so nothing was captured beyond the
-  core file. It did not recur in 34 subsequent runs of the same workload on the same
-  image. Native code from numpy, scipy, scikit-image and matplotlib is all in play and it
-  is not attributed to anything; recorded here so that a second occurrence is known to be
-  a second rather than a first.
+- **A SIGSEGV on 2026-09-01, almost certainly not this package's.** Seen once while
+  reworking `quantify_solid`, and not reproduced in 34 further runs. Backtraced from the
+  core afterwards: the instruction pointer was `0x0b4b080e42`, an address in no mapped
+  region, reached during an ordinary attribute lookup under numpy's `__array_function__`
+  dispatch — a jump through a corrupted pointer, not a bug in any code path here. A second
+  crash the same hour, in an unrelated `sga_score` test run, landed somewhere else
+  entirely (pandas' `lib.infer_dtype`). Two corrupted pointers at unrelated sites, neither
+  reproducible, on a machine with a background history of segfaults in unrelated software,
+  points at memory rather than at any one library. Recorded so a recurrence is known to be
+  a recurrence.
 
 ## Who uses it
 
