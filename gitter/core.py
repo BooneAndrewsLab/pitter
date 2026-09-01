@@ -5,7 +5,9 @@ from itertools import product
 
 import numpy as np
 import pandas as p
-from matplotlib import pyplot as plt
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.collections import LineCollection
+from matplotlib.figure import Figure
 from skimage.io import imread
 from skimage.transform import rescale as skrescale
 
@@ -14,6 +16,16 @@ from .common import DEFAULT_FORMAT, FORMATS, GitterException
 from .utils import set_contrast, autorotate_image, threshold_image, remove_rle, colony_peaks, round_odd, find_bounds
 
 log = logging.getLogger(__name__)
+
+#: How the gridded overlay is written. Half resolution still leaves roughly 40 pixels per
+#: colony on a 1536 plate, which is more than enough to see a grid that has slipped, and
+#: it is the difference between 1.4MB and 0.5MB per plate -- a 40 plate screen is 57MB of
+#: debugging aid at full size. 100 dpi with the figure sized in pixels/100 means one
+#: figure inch is one hundred image pixels, so the output is the source image's own
+#: dimensions scaled by GRID_SCALE and nothing else.
+GRID_SCALE = .5
+GRID_QUALITY = 85
+GRID_DPI = 100
 
 
 class Gitter:
@@ -74,13 +86,25 @@ class Gitter:
             self.window = ref_plate.window
             self.plate_boundaries = ref_plate.plate_boundaries
             self.data = ref_plate.data.copy()
+            # print(self.data.loc[self.data.col.isin([16, 17])])
         else:
+            # plt.imshow(self.thresholded, cmap='Greys_r')
+            # plt.savefig('/home/matej/tet.png')
+
             sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0,
                                             override_boundaries=ref_plate.plate_boundaries[::2] if ref_plate else None)
             sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1,
                                             override_boundaries=ref_plate.plate_boundaries[1::2] if ref_plate else None)
 
+            # plt.plot(sum_cols)
+            # plt.savefig('/home/matej/tet.png')
+
             window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero)
+
+            # plt.imshow(self.thresholded, cmap='Greys_r')
+            # plt.vlines(col_peaks, 0, 3000)
+            # plt.savefig('/home/matej/tet.png')
+
             window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero)
 
             self.window = np.round(np.mean([window_cols, window_rows]))
@@ -276,17 +300,49 @@ class Gitter:
             if isinstance(dest, bool):
                 dest = os.path.splitext(self.path)[0] + '_gridded.jpg'
 
-            plt.imshow(self.thresholded, cmap='Greys_r')
-            plt.gcf().set_size_inches((40, 20))
+            self.save_grid_image(dest)
 
-            for _, r in self.data.iterrows():
-                plt.vlines([r.cl + r.x, r.cr + r.x], r.rl + r.y, r.rr + r.y, 'red')
-                plt.hlines([r.rl + r.y, r.rr + r.y], r.cl + r.x, r.cr + r.x, 'red')
-                plt.plot(r.x, r.y, 'b.')
-                plt.plot(r.newx, r.newy, 'y.')
+    def save_grid_image(self, dest):
+        """
+        Draw the fitted grid over the plate and write it out.
 
-            plt.savefig(dest, dpi=200)
-            plt.clf()
+        Three things this does not do, each of which used to cost more than the
+        measurement it illustrates. It does not create four artists per colony -- 6144 of
+        them took 4.6s where one LineCollection takes 0.06s. It does not render a fixed
+        40x20 inches at 200 dpi -- that is an 8000x4000 canvas for a 3888x2592 photograph,
+        5.8s of rendering to upscale an image and surround it with white margin. And it
+        does not go through pyplot, so there is no global figure to remember to close and
+        no backend for a worker process to guess at.
+
+        :param dest: Path to write the JPEG to.
+        :type dest: str
+        """
+        base = self.thresholded if self.opt.grid_on_thresholded else self.original_image
+        height, width = base.shape
+
+        # One closed path per colony, all in a single collection.
+        d = self.data
+        left, right = d.cl + d.x, d.cr + d.x
+        top, bottom = d.rl + d.y, d.rr + d.y
+        boxes = [[(l, t), (r, t), (r, b), (l, b), (l, t)]
+                 for l, r, t, b in zip(left, right, top, bottom)]
+
+        figure = Figure(figsize=(width / GRID_DPI * GRID_SCALE,
+                                 height / GRID_DPI * GRID_SCALE), dpi=GRID_DPI)
+        FigureCanvasAgg(figure)
+
+        # add_axes over the whole figure, and no axis: the ticks were labelling pixel
+        # coordinates of a plate photograph, which nobody has ever needed.
+        ax = figure.add_axes((0, 0, 1, 1))
+        ax.set_axis_off()
+        ax.imshow(base, cmap='Greys_r', interpolation='nearest', aspect='auto')
+        ax.add_collection(LineCollection(boxes, colors='red', linewidths=.7))
+        ax.plot(d.x, d.y, 'b.', markersize=1)
+        ax.plot(d.newx, d.newy, 'y.', markersize=1)
+        ax.set_xlim(0, width)
+        ax.set_ylim(height, 0)
+
+        figure.savefig(dest, dpi=GRID_DPI, pil_kwargs={'quality': GRID_QUALITY})
 
     @staticmethod
     def auto_process(image, **kwargs):
@@ -304,7 +360,8 @@ class GitterOptions:
     def __init__(self, plate_format=DEFAULT_FORMAT, remove_noise=False, auto_rotate=False, inverse=False,
                  contrast=None, rescale=0, save_grid=False, save_dat=True, colony_compat=False, template=None,
                  template_plate=None, ignore_errors=False, resume_processing=False, liquid_assay=False,
-                 local_illumination=False, zero_border=False, use_template_locations=False):
+                 local_illumination=False, zero_border=False, use_template_locations=False,
+                 grid_on_thresholded=False):
         # Check if we have one number plate formats
         if isinstance(plate_format, int):
             if plate_format not in FORMATS:
@@ -341,3 +398,7 @@ class GitterOptions:
         self.local_illumination = local_illumination
         self.border_to_zero = zero_border
         self.use_template_locations = use_template_locations
+        # Draw the grid over the black-and-white mask instead of the plate. Useful when
+        # what you are debugging is the thresholding itself; the default draws over the
+        # photograph, where a grid that fitted the mask but not the colonies shows up.
+        self.grid_on_thresholded = grid_on_thresholded

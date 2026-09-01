@@ -10,7 +10,7 @@ def main():
         description='Process SGA plate(s) and measure colony sizes.',
         epilog="")
     parser.add_argument('image', nargs='+', help='Image(s) or folder(s) to process.')
-    parser.add_argument('-f', '--plate-format', default=1536, help='Plate format as colony count. Default is 1536.')
+    parser.add_argument('-f', '--plate-format', default=1536, help='Plate format as colony count. Default is 1536.', type=int)
     parser.add_argument('-n', '--remove-noise', action='store_true', help='Try removing noise from the image.')
     parser.add_argument('-r', '--auto-rotate', action='store_true', help='Fix image rotation.')
     parser.add_argument('-i', '--inverse', action='store_true', help='Work on inverse image.')
@@ -18,6 +18,9 @@ def main():
     parser.add_argument('-s', '--rescale', default=0,
                         help='Resize image before working on it. This speeds up the processing.')
     parser.add_argument('-g', '--save-grid', action='store_true', help='Save gridded image. Helps with debugging.')
+    parser.add_argument('--grid-on-thresholded', action='store_true',
+                        help='Draw the grid over the black-and-white mask instead of the plate photograph. '
+                             'Use when what you are debugging is the thresholding itself.')
     parser.add_argument('-d', '--skip-dat', action='store_true', help='Save dat file.')
     parser.add_argument('-w', '--walk-folders', '--recurse', action='store_true', help='Recurse into subfolders.')
     parser.add_argument('-e', '--ignore-errors', action='store_true',
