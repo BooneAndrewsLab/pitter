@@ -84,20 +84,29 @@ colony marking the bounds that were measured. Not decoration: it is the only way
 that a plate was measured where you think it was, and a screen quantified without ever
 looking at one is a screen nobody has checked.
 
-## The gridded overlay, and why it is written the way it is
+## Performance, and why the code looks the way it does
 
-Writing that overlay used to cost **more than three times the measurement it illustrates**.
+A plate took **14.84s**. It now takes **2.20s**, and the `.dat` output is byte-identical
+throughout — every change below is to how the work is arranged, not what is computed.
 Measured on a 3888×2592 plate, 1536 colonies:
 
 ```
-load_image   0.84s
-grid         0.26s
-quantify     2.96s
-save        10.78s   <- 73% of the run; the .dat part of it is 0.01s
-TOTAL       14.84s
+                original    now
+load_image        0.84s     0.89s   imread + threshold_image
+grid              0.26s     0.28s
+quantify          2.96s     0.60s
+save             10.78s     0.44s
+TOTAL            14.84s     2.20s
 ```
 
-Two independent causes, both fixed:
+Nearly all of it was overhead attached to **drawing the picture** rather than measuring
+the plate — and not only inside `save()`. Two thirds of `quantify` was bookkeeping for a
+JPEG that had not been written yet.
+
+### Drawing the overlay: 10.78s → 0.44s
+
+The `.dat` half of `save()` is 0.01s. All of the rest was the overlay, from two
+independent causes:
 
 - **6144 matplotlib artists.** `vlines`, `hlines` and two `plot` calls per colony, in a
   Python loop. **4.63s.** Now one `LineCollection` holding a closed path per colony:
@@ -107,15 +116,37 @@ Two independent causes, both fixed:
   ticks labelling pixel coordinates. **5.77s.** Now the figure is sized to the image and
   the axis is off: **1.42s** at full size, **0.80s** at the half resolution it writes.
 
+Then a third, once those two stopped hiding it: matplotlib was **resampling the full-size
+array down to the half-size canvas**, 0.84s of it. Decimating with a stride slice before
+handing the array over, and using `extent` to keep the box coordinates in the full image's
+pixel space, gives the same nearest-neighbour picture at the same file size for **0.44s**.
+
 It also no longer goes through `pyplot`. `Figure` and `FigureCanvasAgg` are used directly,
 which means there is no global figure to remember to close (the old code called `clf()`,
 not `close()`), no shared state to make `save()` unsafe off the main thread, and **no
 backend for a headless process to guess at** — importing this package no longer imports
 `pyplot` at all, so a worker with no display needs no `matplotlib.use('Agg')`.
 
-Result, on the same plate: **10.78s → 0.80s** to save, **14.84s → 4.85s** for the whole
-run, and **2806KB → 715KB** on disk. The `.dat` files are byte-identical before and after;
-nothing about the measurement changed.
+Result: **10.78s → 0.44s** to save, and **2806KB → 715KB** on disk.
+
+### Measuring: 3.36s → 0.60s
+
+`quantify_solid` collects `size` and `circularity` into plain numpy buffers and assigns
+them to the frame once, at the end. The block that records the colony bounds for the
+overlay did not: it wrote **eight `.loc[idx, ...]` scalars per colony**, which is 12288
+pandas setitem calls and, in a profile of the whole run, 5.1s of cumulative time — the
+largest single entry, larger than measuring every colony on the plate.
+
+It now uses the same buffers, three lines above it, and assigns once. Nothing else
+changed; `save_grid=False` was already 0.61s and is unaffected.
+
+**A plate is now ~2.2s, and what remains is real work** — 0.89s decoding a 4MP JPEG and
+thresholding it, 0.60s measuring 1536 colonies (over half of that is scikit-image's
+`perimeter`, inside `circularity`), 0.44s writing the picture. The next worthwhile
+speed-up is not per-plate: images are independent and nothing here processes them in
+parallel, so a 40 plate screen is 88s serially against roughly 11s across eight cores.
+`--template-plate` and `--detect-template` constrain the ordering, so a pool would have to
+grid the templates first.
 
 ### The defaults, and what they cost
 
@@ -157,8 +188,14 @@ you are debugging is the thresholding.
   They no longer have an import to go with them; uncommenting one now needs
   `from matplotlib import pyplot as plt` added back.
 - **There are no tests.** `test/` is empty and `test.py` is a one-line CLI driver. The
-  overlay rewrite above was verified by comparing `.dat` output before and after, which
-  catches a regression in the measurement but not one in the picture.
+  rewrites above were verified by comparing `.dat` output before and after, which catches
+  a regression in the measurement but not one in the picture.
+- **One unexplained SIGSEGV, 2026-09-01.** Seen once while reworking `quantify_solid`, on
+  the first run after the edit, with stderr discarded — so nothing was captured beyond the
+  core file. It did not recur in 34 subsequent runs of the same workload on the same
+  image. Native code from numpy, scipy, scikit-image and matplotlib is all in play and it
+  is not attributed to anything; recorded here so that a second occurrence is known to be
+  a second rather than a first.
 
 ## Who uses it
 

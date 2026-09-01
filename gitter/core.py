@@ -241,19 +241,33 @@ class Gitter:
             # self.data.loc[idx, 'circularity'] = circularity(spot_bw_crop, self.data.loc[idx, 'size'])
 
             if self.opt.save_grid:
-                # Store this only if we're saving grid
-                self.data.loc[idx, 'rl'] = rl
-                self.data.loc[idx, 'rr'] = rr
-                self.data.loc[idx, 'cl'] = cl
-                self.data.loc[idx, 'cr'] = cr
+                # Store this only if we're saving grid. Into the same buffers as size and
+                # circularity above, not straight into the frame: eight .loc writes per
+                # colony is 12288 pandas setitem calls, and they cost more than measuring
+                # every colony on the plate.
+                new_columns['rl'][idx] = rl
+                new_columns['rr'][idx] = rr
+                new_columns['cl'][idx] = cl
+                new_columns['cr'][idx] = cr
 
-                self.data.loc[idx, 'x'] = x
-                self.data.loc[idx, 'y'] = y
-                self.data.loc[idx, 'newx'] = x
-                self.data.loc[idx, 'newy'] = y
+                new_columns['nx'][idx] = x
+                new_columns['ny'][idx] = y
 
         self.data.loc[:, 'size'] = new_columns['size']
         self.data.loc[:, 'circularity'] = new_columns['circularity']
+
+        if self.opt.save_grid:
+            for name in ('rl', 'rr', 'cl', 'cr'):
+                self.data.loc[:, name] = new_columns[name]
+
+            # x/y are the recentred positions; newx/newy have always been assigned the
+            # same values, so the blue marker has never been anywhere the yellow one is
+            # not. Kept as-is here -- deciding whether recentring should record where it
+            # started is a change to what the picture means, not to how fast it is drawn.
+            self.data.loc[:, 'x'] = new_columns['nx']
+            self.data.loc[:, 'y'] = new_columns['ny']
+            self.data.loc[:, 'newx'] = new_columns['nx']
+            self.data.loc[:, 'newy'] = new_columns['ny']
 
         return self.data
 
@@ -335,7 +349,14 @@ class Gitter:
         # coordinates of a plate photograph, which nobody has ever needed.
         ax = figure.add_axes((0, 0, 1, 1))
         ax.set_axis_off()
-        ax.imshow(base, cmap='Greys_r', interpolation='nearest', aspect='auto')
+
+        # Decimate before handing the array over rather than making matplotlib resample
+        # it down to the canvas: same nearest-neighbour result, same file size, half the
+        # time. extent keeps the box coordinates in the full image's pixel space, so
+        # nothing below has to know the picture was shrunk.
+        stride = max(1, int(round(1 / GRID_SCALE)))
+        ax.imshow(base[::stride, ::stride], cmap='Greys_r', interpolation='nearest',
+                  aspect='auto', extent=(0, width, height, 0))
         ax.add_collection(LineCollection(boxes, colors='red', linewidths=.7))
         ax.plot(d.x, d.y, 'b.', markersize=1)
         ax.plot(d.newx, d.newy, 'y.', markersize=1)
