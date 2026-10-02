@@ -6,6 +6,8 @@ from skimage.measure import perimeter
 from skimage.morphology import opening, square
 from skimage.transform import radon, rescale, rotate, resize, downscale_local_mean
 
+from .common import GitterException
+
 log = logging.getLogger(__name__)
 
 
@@ -179,7 +181,7 @@ def _rolling_window(a, window):
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-def colony_peaks(x, n, border_to_zero=False):
+def colony_peaks(x, n, border_to_zero=False, axis_name='lines'):
     # Smooth the signal
     window = signal.windows.general_gaussian(51, p=1.5, sig=20)
 
@@ -192,6 +194,12 @@ def colony_peaks(x, n, border_to_zero=False):
 
     # Find local maximas
     peaks = signal.argrelmax(filtered, order=30)[0]
+
+    # Fewer peaks than the plate needs means the plate format is wrong (a 384 plate gridded
+    # as 1536, say); left alone, the rolling window below fails with a numpy shape error.
+    if len(peaks) < n:
+        raise GitterException(f'Found only {len(peaks)} {axis_name} of colonies, but this plate format '
+                              f'needs {n}. Check that the plate format matches the plate.')
 
     peak_distances = np.abs(peaks[:-1] - peaks[1:])
     dist_dev = np.std(_rolling_window(peak_distances, n - 1), 1)

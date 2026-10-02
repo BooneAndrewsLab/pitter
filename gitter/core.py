@@ -99,13 +99,13 @@ class Gitter:
             # plt.plot(sum_cols)
             # plt.savefig('/home/matej/tet.png')
 
-            window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero)
+            window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero, 'columns')
 
             # plt.imshow(self.thresholded, cmap='Greys_r')
             # plt.vlines(col_peaks, 0, 3000)
             # plt.savefig('/home/matej/tet.png')
 
-            window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero)
+            window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero, 'rows')
 
             self.window = np.round(np.mean([window_cols, window_rows]))
             self.plate_boundaries = xlb, ylb, xrb, yrb
