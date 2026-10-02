@@ -41,7 +41,7 @@ def round_odd(x):
 
 
 def _find_rotation_angle(im, degree_inc=0.2, scale_to_h=500, angle_eps=50):
-    im = rescale(im, scale_to_h / im.shape[0], mode='reflect', multichannel=False, anti_aliasing=True)
+    im = rescale(im, scale_to_h / im.shape[0], mode='reflect', anti_aliasing=True)
     samples = (angle_eps * 2) / degree_inc
 
     theta = np.linspace(90 - angle_eps, 90 + angle_eps, int(samples), endpoint=False)
