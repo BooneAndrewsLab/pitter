@@ -13,7 +13,8 @@ from skimage.transform import rescale as skrescale
 
 from gitter.utils import circularity
 from .common import DEFAULT_FORMAT, FORMATS, GitterException
-from .utils import set_contrast, autorotate_image, threshold_image, remove_rle, colony_peaks, round_odd, find_bounds
+from .utils import set_contrast, autorotate_image, threshold_image, remove_rle, colony_peaks, round_odd, find_bounds, \
+    remove_noise
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +120,11 @@ class Gitter:
                 how='left', left_on='y', right_index=True)
 
     def quantify(self):
+        # Only once the grid is placed: finding the plate edges relies on the speckle-prone
+        # rim that this would clean away.
+        if self.opt.remove_noise:
+            self.thresholded = remove_noise(self.thresholded, self.window)
+
         if self.opt.liquid_assay:
             return self.quantify_liquid()
         return self.quantify_solid()

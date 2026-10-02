@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from scipy import signal
 from skimage.measure import perimeter
-from skimage.morphology import opening, square
+from skimage.morphology import binary_opening, disk, opening, remove_small_objects, square
 from skimage.transform import radon, rescale, rotate, resize, downscale_local_mean
 
 from .common import GitterException
@@ -206,6 +206,29 @@ def colony_peaks(x, n, border_to_zero=False, axis_name='lines'):
     grid_start = np.argmin(dist_dev)
 
     return np.median(peak_distances), peaks[grid_start:grid_start + n]
+
+
+def remove_noise(im, window):
+    """
+    Drop speckle from a thresholded image so it does not count towards colony sizes.
+
+    Smudges, handwriting and plate edges threshold into speckle that fills the gaps
+    between colonies. find_bounds then finds no gap, the colony's box grows towards its
+    neighbours, and every speck inside it is counted as colony. An opening cuts the thin
+    bridges between speckle and colonies, and the loose specks left are removed. Both
+    sizes scale with the grid spacing, so the result does not depend on image resolution.
+
+    :param im: thresholded image
+    :param window: distance between neighbouring colonies, in pixels
+    :type im: ndarray
+    :type window: float
+
+    :return: Thresholded image without the noise
+    :rtype: ndarray
+    """
+    im = binary_opening(im.astype(bool), disk(max(1, int(round(window / 20)))))
+    im = remove_small_objects(im, max_size=int(round((window / 8) ** 2)))
+    return im.astype(np.uint8)
 
 
 def find_bounds(spot_axis):
