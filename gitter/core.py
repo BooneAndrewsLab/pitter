@@ -28,6 +28,21 @@ GRID_SCALE = .5
 GRID_QUALITY = 85
 GRID_DPI = 100
 
+#: An outermost row/column whose median colony is smaller than this fraction of the
+#: plate's median colony is taken to be agar or rim rather than colonies. A failed grid
+#: measured 0.13; a correct one 1.0-1.2, but a plate with a poorly growing edge can dip,
+#: so the line sits well below that.
+EDGE_EMPTY_RATIO = 0.4
+
+#: A band one pitch outside the grid whose thresholded signal is more than this fraction
+#: of the signal over the grid's own rows/columns holds a line of colonies the grid left
+#: out. A failed grid measured 1.08, correct ones 0.16-0.30.
+MISSED_LINE_RATIO = 0.7
+
+#: Half-width of that band as a fraction of the grid pitch: narrow enough to stay between
+#: the lines, wide enough to average over the colony's diameter.
+MISSED_LINE_HALF_WIDTH = 1 / 3
+
 
 class Gitter:
     data = None
@@ -35,6 +50,8 @@ class Gitter:
     original_image = None
     thresholded = None
     plate_boundaries = None
+    #: Problems found with the grid; see check_grid
+    warnings = None
 
     def __init__(self, image, options=None, **kwargs):
         """
@@ -49,6 +66,7 @@ class Gitter:
         """
         self.path = image
         self.opt = options or GitterOptions(**kwargs)
+        self.warnings = []
 
     def load_image(self):
         """
@@ -87,26 +105,35 @@ class Gitter:
             self.window = ref_plate.window
             self.plate_boundaries = ref_plate.plate_boundaries
             self.data = ref_plate.data.copy()
+            self.peak_info = {}
             # print(self.data.loc[self.data.col.isin([16, 17])])
         else:
             # plt.imshow(self.thresholded, cmap='Greys_r')
             # plt.savefig('/home/matej/tet.png')
 
-            sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0,
-                                            override_boundaries=ref_plate.plate_boundaries[::2] if ref_plate else None)
-            sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1,
-                                            override_boundaries=ref_plate.plate_boundaries[1::2] if ref_plate else None)
+            x_override = ref_plate.plate_boundaries[::2] if ref_plate else None
+            y_override = ref_plate.plate_boundaries[1::2] if ref_plate else None
+            if self.opt.bounds:
+                # The user's box wins over the template's plate location.
+                x_override, y_override = self._clipped_bounds()
+
+            sum_cols, xlb, xrb = remove_rle(self.thresholded, p=0.2, axis=0, override_boundaries=x_override)
+            sum_rows, ylb, yrb = remove_rle(self.thresholded, p=0.2, axis=1, override_boundaries=y_override)
 
             # plt.plot(sum_cols)
             # plt.savefig('/home/matej/tet.png')
 
-            window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero, 'columns')
+            peak_info = {'cols': {}, 'rows': {}}
+            window_cols, col_peaks = colony_peaks(sum_cols, self.opt.plate_cols, self.opt.border_to_zero, 'columns',
+                                                  info=peak_info['cols'])
 
             # plt.imshow(self.thresholded, cmap='Greys_r')
             # plt.vlines(col_peaks, 0, 3000)
             # plt.savefig('/home/matej/tet.png')
 
-            window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero, 'rows')
+            window_rows, row_peaks = colony_peaks(sum_rows, self.opt.plate_rows, self.opt.border_to_zero, 'rows',
+                                                  info=peak_info['rows'])
+            self.peak_info = peak_info
 
             self.window = np.round(np.mean([window_cols, window_rows]))
             self.plate_boundaries = xlb, ylb, xrb, yrb
@@ -118,6 +145,120 @@ class Gitter:
             self.data = self.data.merge(
                 p.DataFrame(np.arange(1, row_peaks.shape[0] + 1), np.sort(row_peaks), columns=['row']),
                 how='left', left_on='y', right_index=True)
+
+    def _clipped_bounds(self):
+        """
+        The user-supplied grid bounds, clipped to the image.
+
+        :return: (x_left, x_right) and (y_top, y_bottom)
+        :rtype: tuple
+        """
+        height, width = self.thresholded.shape
+        try:
+            x_left, y_top, x_right, y_bottom = (int(round(v)) for v in self.opt.bounds)
+        except (TypeError, ValueError):
+            raise GitterException('Grid bounds must be four numbers: x_left, y_top, x_right, y_bottom.')
+
+        x_left, x_right = max(0, x_left), min(width, x_right)
+        y_top, y_bottom = max(0, y_top), min(height, y_bottom)
+
+        if x_left >= x_right or y_top >= y_bottom:
+            raise GitterException(
+                f'Grid bounds ({x_left}, {y_top}, {x_right}, {y_bottom}) are empty or outside the image '
+                f'({width}x{height} pixels). Expected x_left < x_right and y_top < y_bottom.')
+
+        return (x_left, x_right), (y_top, y_bottom)
+
+    def check_grid(self):
+        """
+        Look for signs that the grid is shifted by a row/column, after quantify.
+
+        Results are stored in self.warnings as dicts with the keys code ('ambiguous',
+        'edge_empty' or 'missed_line'), axis ('row' or 'col'), side ('start', 'end' or
+        None) and a human-readable message. Skipped for liquid assays, which have no
+        thresholded colony sizes to compare.
+
+        :return: The warnings
+        :rtype: list
+        """
+        self.warnings = []
+
+        for axis, name in (('rows', 'row'), ('cols', 'col')):
+            info = getattr(self, 'peak_info', {}).get(axis)
+            if info and info.get('ambiguous'):
+                self.warnings.append(self._warning(
+                    'ambiguous', name, None,
+                    f'The {name}s could be placed in more than one way ({info["candidates"]} equally regular '
+                    f'positions) -- check that the grid is not shifted by a {name}.'))
+
+        if not self.opt.liquid_assay and self.data is not None and 'size' in self.data:
+            self._check_edges()
+            self._check_missed_lines()
+
+        for w in self.warnings:
+            log.warning(w['message'])
+
+        return self.warnings
+
+    @staticmethod
+    def _warning(code, axis, side, message):
+        return {'code': code, 'axis': axis, 'side': side, 'message': message}
+
+    def _check_edges(self):
+        plate_median = self.data['size'].median()
+        if not plate_median > 0:
+            return
+
+        # Which way the grid would have to move to be right.
+        shifts = {('row', 'start'): ('First row', 'up'), ('row', 'end'): ('Last row', 'down'),
+                  ('col', 'start'): ('First column', 'left'), ('col', 'end'): ('Last column', 'right')}
+        for name in ('row', 'col'):
+            medians = self.data.groupby(name)['size'].median()
+            for side, line in (('start', medians.index.min()), ('end', medians.index.max())):
+                if medians[line] < EDGE_EMPTY_RATIO * plate_median:
+                    label, direction = shifts[(name, side)]
+                    self.warnings.append(self._warning(
+                        'edge_empty', name, side,
+                        f'{label} looks empty -- the grid may be shifted {direction} a {name}.'))
+
+    def _check_missed_lines(self):
+        im = self.thresholded
+        height, width = im.shape
+        half = max(1, int(round(self.window * MISSED_LINE_HALF_WIDTH)))
+        pitch = int(self.window)
+
+        for name, other, size in (('row', 'x', height), ('col', 'y', width)):
+            pos = 'y' if name == 'row' else 'x'
+            lo, hi = int(self.data[other].min()), int(self.data[other].max()) + 1
+            # Mean signal per image line, across the grid's extent on the other axis.
+            if name == 'row':
+                profile = im[:, max(0, lo):hi].mean(axis=1)
+            else:
+                profile = im[max(0, lo):hi, :].mean(axis=0)
+
+            def band(center):
+                a, b = center - half, center + half
+                if a < 0 or b > size:
+                    return None
+                return profile[a:b].mean()
+
+            # Per line medians: with save_grid on, quantify has moved each colony's x/y onto
+            # the colony itself, so the raw values are one per colony rather than per line.
+            centers = np.round(np.sort(self.data.groupby(name)[pos].median().values)).astype(int)
+            inside = [v for v in (band(c) for c in centers) if v is not None]
+            if not inside or not np.mean(inside) > 0:
+                continue
+            reference = np.mean(inside)
+
+            for side, center in (('start', centers[0] - pitch), ('end', centers[-1] + pitch)):
+                outside = band(center)
+                if outside is not None and outside > MISSED_LINE_RATIO * reference:
+                    where = {('row', 'start'): 'above the first row', ('row', 'end'): 'below the last row',
+                             ('col', 'start'): 'left of the first column', ('col', 'end'): 'right of the last column'}
+                    self.warnings.append(self._warning(
+                        'missed_line', name, side,
+                        f'There is as much colony signal {where[(name, side)]} as inside the grid -- '
+                        f'a {name} of colonies may have been left out.'))
 
     def quantify(self):
         # Only once the grid is placed: finding the plate edges relies on the speckle-prone
@@ -378,6 +519,7 @@ class Gitter:
         gitter.grid()
 
         gitter.quantify()
+        gitter.check_grid()
         gitter.save()
 
         return gitter
@@ -388,7 +530,7 @@ class GitterOptions:
                  contrast=None, rescale=0, save_grid=False, save_dat=True, colony_compat=False, template=None,
                  template_plate=None, ignore_errors=False, resume_processing=False, liquid_assay=False,
                  local_illumination=False, zero_border=False, use_template_locations=False,
-                 grid_on_thresholded=False):
+                 grid_on_thresholded=False, bounds=None):
         # Check if we have one number plate formats
         if isinstance(plate_format, int):
             if plate_format not in FORMATS:
@@ -402,6 +544,16 @@ class GitterOptions:
 
         if contrast and contrast <= 0:
             raise GitterException('Contrast value must be positive')
+
+        if bounds is not None:
+            try:
+                bounds = tuple(float(v) for v in bounds)
+            except (TypeError, ValueError):
+                bounds = ()
+            if len(bounds) != 4:
+                raise GitterException('Grid bounds must be four numbers: x_left, y_top, x_right, y_bottom.')
+            if bounds[0] >= bounds[2] or bounds[1] >= bounds[3]:
+                raise GitterException(f'Invalid grid bounds {bounds}: need x_left < x_right and y_top < y_bottom.')
 
         rescale = int(rescale)
 
@@ -429,3 +581,7 @@ class GitterOptions:
         # what you are debugging is the thresholding itself; the default draws over the
         # photograph, where a grid that fitted the mask but not the colonies shows up.
         self.grid_on_thresholded = grid_on_thresholded
+        # (x_left, y_top, x_right, y_bottom) in the loaded image's pixels (after rescale and
+        # rotation): where the grid's colonies are. Anything outside is ignored when placing
+        # the grid, which keeps the rim from being mistaken for a row.
+        self.bounds = bounds

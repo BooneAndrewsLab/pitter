@@ -181,7 +181,39 @@ def _rolling_window(a, window):
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-def colony_peaks(x, n, border_to_zero=False, axis_name='lines'):
+#: Peaks lower than this fraction of the median peak height are not colony rows/columns.
+#: The agar rim and plate edge leave a smoothed peak at roughly 0.4x of a real row, and
+#: they are as evenly spaced as a real row, so spacing alone cannot tell them apart.
+MIN_PEAK_HEIGHT = 0.5
+
+#: Windows whose spacing deviation is within this many pixels of the best one are counted
+#: as equally good placements. Peak positions are whole pixels, so a window that differs
+#: by one pixel of spread is indistinguishable from the best; a pitch is ~100px, so this
+#: still separates a regular grid from a clearly irregular one.
+AMBIGUITY_TOLERANCE_PX = 1.0
+
+
+def colony_peaks(x, n, border_to_zero=False, axis_name='lines', info=None):
+    """
+    Find the n colony lines in a row or column projection.
+
+    Peaks are the local maxima of the smoothed projection; the n consecutive peaks with
+    the most even spacing are the grid. Peaks much lower than the typical one (the plate
+    rim) are discarded first.
+
+    :param x: Projection of the thresholded plate onto one axis
+    :param n: Number of rows/columns the plate format has
+    :param border_to_zero: Zero the signal below its mean before looking for peaks
+    :param axis_name: Name used in error messages
+    :param info: Optional dict that is filled with 'ambiguous' (more than one window is
+        about as regular as the best) and 'candidates' (how many such windows)
+    :type x: ndarray
+    :type n: int
+    :type info: dict
+
+    :return: Median peak distance and the n peak positions
+    :rtype: tuple
+    """
     # Smooth the signal
     window = signal.windows.general_gaussian(51, p=1.5, sig=20)
 
@@ -195,6 +227,14 @@ def colony_peaks(x, n, border_to_zero=False, axis_name='lines'):
     # Find local maximas
     peaks = signal.argrelmax(filtered, order=30)[0]
 
+    # Peaks outside the plate were zeroed by remove_rle, so they must not drag the median
+    # down. The FFT leaves ~1e-12 of rounding noise where the signal is zero, hence a
+    # relative threshold rather than > 0.
+    heights = filtered[peaks]
+    real = heights > 1e-6 * heights.max() if len(heights) else heights > 0
+    if np.any(real):
+        peaks = peaks[heights >= MIN_PEAK_HEIGHT * np.median(heights[real])]
+
     # Fewer peaks than the plate needs means the plate format is wrong (a 384 plate gridded
     # as 1536, say); left alone, the rolling window below fails with a numpy shape error.
     if len(peaks) < n:
@@ -204,6 +244,11 @@ def colony_peaks(x, n, border_to_zero=False, axis_name='lines'):
     peak_distances = np.abs(peaks[:-1] - peaks[1:])
     dist_dev = np.std(_rolling_window(peak_distances, n - 1), 1)
     grid_start = np.argmin(dist_dev)
+
+    if info is not None:
+        candidates = int(np.sum(dist_dev <= dist_dev[grid_start] + AMBIGUITY_TOLERANCE_PX))
+        info['candidates'] = candidates
+        info['ambiguous'] = candidates > 1
 
     return np.median(peak_distances), peaks[grid_start:grid_start + n]
 

@@ -48,7 +48,16 @@ def main():
                         help='When looking for peaks, set pixel_column < column_mean to zero, effectively removing '
                              '"ghost" peaks on plate border. Use only if the colonies are well defined.')
 
+    parser.add_argument('-b', '--bounds', metavar='X1,Y1,X2,Y2',
+                        help='Box (left, top, right, bottom, in pixels of the loaded image) that contains the '
+                             'colonies. Everything outside is ignored when placing the grid, e.g. the plate rim.')
+
     args = vars(parser.parse_args())
+    if args['bounds'] is not None:
+        try:
+            args['bounds'] = tuple(float(v) for v in args['bounds'].split(','))
+        except ValueError:
+            parser.error('--bounds needs four comma-separated numbers: X1,Y1,X2,Y2')
     args['save_dat'] = not args.pop('skip_dat')
     recurse = args.pop('walk_folders')
     template_plate = args.pop('template_plate')
