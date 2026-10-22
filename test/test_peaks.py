@@ -3,7 +3,7 @@ import pytest
 
 from gitter.common import GitterException
 from gitter.core import Gitter, GitterOptions
-from gitter.utils import colony_peaks
+from gitter.utils import colony_peaks, remove_rle
 
 
 def projection(centres, heights, length=3000, sigma=15):
@@ -67,3 +67,29 @@ def test_check_grid_flags_empty_edge():
     codes = {(w['code'], w['axis'], w['side']) for w in g.check_grid()}
     assert ('edge_empty', 'row', 'end') in codes
     assert not any(c[0] == 'edge_empty' and c[1] == 'col' for c in codes)
+
+
+def test_small_scan_lines_are_not_merged():
+    # A 1536 plate scanned at ~1500px wide: 48 columns only 26px apart.
+    centres = 120 + 26 * np.arange(48)
+    _, peaks = colony_peaks(projection(centres, [1000] * 48, length=1500, sigma=4), 48)
+    assert np.all(np.abs(peaks - centres) <= 1)
+
+
+def test_remove_rle_without_a_plate_edge():
+    # Colonies but no long run (plate edge) in either half: nothing is clipped.
+    im = np.zeros((100, 200), dtype=np.uint8)
+    im[40:60, 20:180:10] = 1
+    x, left, right = remove_rle(im, axis=0)
+    assert (left, right) == (0, 200)
+    assert x.sum() == im.sum()
+
+
+def test_remove_rle_clips_at_both_edges():
+    im = np.zeros((100, 201), dtype=np.uint8)
+    im[:, 10] = 1    # left plate edge
+    im[:, 190] = 1   # right plate edge
+    im[40:60, 30:170:10] = 1
+    x, left, right = remove_rle(im, axis=0)
+    assert (left, right) == (10, 190)
+    assert x[:10].sum() == 0 and x[190:].sum() == 0

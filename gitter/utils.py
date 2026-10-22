@@ -165,12 +165,14 @@ def remove_rle(im, p=0.2, axis=0, override_boundaries=None):
     else:
         zhl, zhr = _split_half(z)
 
-        left, right = np.where(zhl)[0].max(), np.where(zhr)[0].min() + zhl.shape[0]
+        # A half without a long run has no plate edge in the picture (the scan is cropped
+        # close to the plate, or the rim thresholded in pieces), so that side stays as is.
+        # _split_half drops the two middle elements, hence the right half's offset.
+        left = np.where(zhl)[0].max() if zhl.any() else 0
+        right = np.where(zhr)[0].min() + x.shape[0] - zhr.shape[0] if zhr.any() else x.shape[0]
 
-        if zhl.any():
-            x[:left] = 0
-        if zhr.any():
-            x[right:] = 0
+        x[:left] = 0
+        x[right:] = 0
 
     return x, left, right
 
@@ -191,6 +193,27 @@ MIN_PEAK_HEIGHT = 0.5
 #: by one pixel of spread is indistinguishable from the best; a pitch is ~100px, so this
 #: still separates a regular grid from a clearly irregular one.
 AMBIGUITY_TOLERANCE_PX = 1.0
+
+#: Line spacing, in pixels, that the smoothing window and the minimum peak distance in
+#: colony_peaks are tuned for.
+PEAK_TUNED_PITCH = 100.
+
+#: Below this estimated spacing the tuned settings are scaled down by spacing / tuned
+#: spacing, or neighbouring lines blur into one peak: a small scan with 1536 colonies
+#: across 1500px has them ~26px apart. Camera images of 1536 plates estimate at ~70-100px
+#: and grid well with the tuned settings, so they are left exactly as they were.
+PEAK_SCALE_BELOW_PITCH = 60.
+
+
+def _expected_pitch(x, n):
+    """
+    Upper bound on the distance between colony lines: the stretch of the projection that
+    has any signal, split into n. It includes the margins around the grid, so it errs
+    towards the tuned peak finding settings rather than away from them.
+    """
+    on = np.flatnonzero(x > 0)
+    span = on[-1] - on[0] + 1 if len(on) else len(x)
+    return span / float(n)
 
 
 def colony_peaks(x, n, border_to_zero=False, axis_name='lines', info=None):
@@ -214,18 +237,22 @@ def colony_peaks(x, n, border_to_zero=False, axis_name='lines', info=None):
     :return: Median peak distance and the n peak positions
     :rtype: tuple
     """
+    pitch = _expected_pitch(x, n)
+    scale = pitch / PEAK_TUNED_PITCH if pitch < PEAK_SCALE_BELOW_PITCH else 1.
+    length = round_odd(51 * scale)
+
     # Smooth the signal
-    window = signal.windows.general_gaussian(51, p=1.5, sig=20)
+    window = signal.windows.general_gaussian(length, p=1.5, sig=20 * scale)
 
     filtered = signal.fftconvolve(window, x)
     filtered = (np.average(x) / np.average(filtered)) * filtered
-    filtered = np.roll(filtered, -25)
+    filtered = np.roll(filtered, -(length // 2))
 
     if border_to_zero:
         filtered[filtered < np.mean(filtered)] = 0
 
     # Find local maximas
-    peaks = signal.argrelmax(filtered, order=30)[0]
+    peaks = signal.argrelmax(filtered, order=max(1, round(30 * scale)))[0]
 
     # Peaks outside the plate were zeroed by remove_rle, so they must not drag the median
     # down. The FFT leaves ~1e-12 of rounding noise where the signal is zero, hence a
