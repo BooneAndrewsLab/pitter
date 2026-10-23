@@ -8,6 +8,7 @@ import pandas as p
 from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
+from skimage import img_as_float
 from skimage.io import imread
 from skimage.transform import rescale as skrescale
 
@@ -76,7 +77,9 @@ class Gitter:
         :return: Greyscale image as 2D float array with all preprocessing steps applied.
         :rtype: ndarray
         """
-        im = imread(self.path, as_gray=True)
+        # as_gray only converts when there is colour to convert: a greyscale scan comes back
+        # as uint8 0-255, and everything below assumes floats in [0, 1].
+        im = img_as_float(imread(self.path, as_gray=True))
 
         # Rescale image for faster processing
         if self.opt.rescale:

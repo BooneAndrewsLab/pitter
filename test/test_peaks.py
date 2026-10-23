@@ -93,3 +93,25 @@ def test_remove_rle_clips_at_both_edges():
     x, left, right = remove_rle(im, axis=0)
     assert (left, right) == (10, 190)
     assert x[:10].sum() == 0 and x[190:].sum() == 0
+
+
+def test_greyscale_file_loads_as_floats(tmp_path):
+    # A single-channel scan: as_gray leaves it uint8 0-255 unless converted.
+    from skimage.io import imsave
+    path = tmp_path / 'grey.png'
+    im = np.full((1008, 1457), 120, dtype=np.uint8)
+    for y in range(100, 900, 60):
+        for x in range(100, 1350, 60):
+            im[y:y + 20, x:x + 20] = 170
+    imsave(path, im)
+    g = Gitter(str(path), plate_format=96)
+    loaded = g.load_image()
+    assert loaded.dtype.kind == 'f' and 0 <= loaded.min() and loaded.max() <= 1
+
+
+def test_threshold_without_contrast_raises():
+    # Every value outside the threshold range leaves one side empty; this used to loop
+    # forever on a NaN mean.
+    from gitter.utils import _find_optimal_threshold
+    with pytest.raises(GitterException):
+        _find_optimal_threshold(np.full((50, 50), 0.9))

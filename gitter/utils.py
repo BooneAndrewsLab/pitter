@@ -85,8 +85,17 @@ def _find_optimal_threshold(x, r=2, lim=(0, 0.4), cap=0.2):
     i = 1
 
     while True:
-        cmu1 = np.mean(x[x >= t])
-        cmu2 = np.mean(x[x < t])
+        above, below = x[x >= t], x[x < t]
+        # An empty side makes its mean NaN, and NaN never compares equal, so the loop
+        # would never end. Rounding can also leave t alternating between two values.
+        if not above.size or not below.size:
+            raise GitterException('The image has no contrast to threshold colonies from. '
+                                  'Check that it is a plate photograph.')
+        if i > 100:
+            raise GitterException('Could not find a threshold for this image.')
+
+        cmu1 = np.mean(above)
+        cmu2 = np.mean(below)
 
         if (i > 1 and cmu1 == mu1 and cmu2 == mu2) or t > 1:
             log.info('Optimal threshold t = %s' % t)
